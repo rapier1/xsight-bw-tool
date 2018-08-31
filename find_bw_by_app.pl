@@ -12,12 +12,12 @@ my $curl = WWW::Curl::Easy->new;
 
 # load and propcess command line argument
 my %options = ();
-getopts("d:c:t:hfuq", \%options);
+getopts("u:p:d:c:t:hfuq", \%options);
 
 if ($options{h}) {
     print "Usage: find_bw_by_app -d {databasename} -c {command} -t {time range e.g. 1h or 10d}\n";
     print "                      -f (use Freedman-Diaconis histogram bin size)\n";
-    print "                      -u (unified stats using max of in/out bw oper flow)\n";
+    print "                      -s (unified stats using max of in/out bw oper flow)\n";
     print "                      -q only print histogram data\n";
     exit;
 }
@@ -31,6 +31,14 @@ if (!defined $options{c}) {
 }
 if (!defined $options{t}) {
     print "please provide a time range";
+    exit;
+}
+if (!defined $options{u}) {
+    print "please provide a username for the database";
+    exit;
+}
+if (!defined $options{p}) {
+    print "please provide a password for the database user";
     exit;
 }
 
@@ -62,7 +70,7 @@ if (!$options{q}) {
 $curl->setopt(CURLOPT_HEADER,0);
 $curl->setopt(CURLOPT_URL, $url->abs);
 $curl->setopt(CURLOPT_HTTPAUTH, CURLAUTH_ANY);
-$curl->setopt(CURLOPT_USERPWD, "user:pwd");
+$curl->setopt(CURLOPT_USERPWD, "$options{u}:$options{p}");
 
 # A filehandle, reference to a scalar or reference to a typeglob can be used here.
 my $response_body;
