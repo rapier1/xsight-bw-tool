@@ -12,7 +12,7 @@ my $curl = WWW::Curl::Easy->new;
 
 # load and propcess command line argument
 my %options = ();
-getopts("u:p:d:c:t:hfuq", \%options);
+getopts("u:p:d:c:t:hfsq", \%options);
 
 if ($options{h}) {
     print "Usage: find_bw_by_app -d {databasename} -c {command} -t {time range e.g. 1h or 10d}\n";
@@ -155,7 +155,7 @@ foreach $flowid (keys %flows) {
 	    $bwresults{$flowid}{outtime} = $deltatime;
 	}
     }
-    if ($options{u}) {
+    if ($options{s}) {
 	if ($bwresults{$flowid}{inbw} > $bwresults{$flowid}{outbw}) {
 	    $bwresults{$flowid}{unified} = $bwresults{$flowid}{inbw};
 	} else {
@@ -175,7 +175,7 @@ my $out_stats = Statistics::Descriptive::Full->new();
 #may want to break this down into inbound and outbound
 my ($inbw, $outbw, $intime, $outtime);
 foreach $flowid (keys %bwresults) {
-    if ($options{u}) {
+    if ($options{s}) {
 	if (($bwresults{$flowid}{inbw} > 0) || ($bwresults{$flowid}{outbw} > 0)) {
 	    if ($bwresults{$flowid}{inbw} > $bwresults{$flowid}{outbw}) {
 		$stats->add_data($bwresults{$flowid}{inbw});
@@ -191,7 +191,7 @@ foreach $flowid (keys %bwresults) {
 
 #making these global for ease of laziness
 my $bin_size, $bin_count, $altbin_size, $altbin_count;
-if ($options{u}) {
+if ($options{s}) {
     print "\nUnified Stats\n";
     &printStats($stats);
     &printResults("unified");
@@ -248,7 +248,7 @@ sub printResults () {
     #for ($i = 0; $i <= $#bintotal; $i++) {
     #    print "$i\t$bintotal[$i]\n";
     #}
-    if ($options{u}) {
+    if ($options{s}) {
 	print "bin:flow:inbw:intime:outbw:outtime\n";
     } else {
 	print "bin:flow:$direction:$dirtime\n";
@@ -257,7 +257,7 @@ sub printResults () {
 	my @bindata = @{$results[$i]};
 	for (my $j = 0; $j <= $#bindata; $j++) {
 	    if (($bwresults{$bindata[$j]}{inbw} > 0) || ($bwresults{$bindata[$j]}{outbw} > 0)) {
-		if ($options{u}) {
+		if ($options{s}) {
 		    print "$i:$bindata[$j]:$bwresults{$bindata[$j]}{inbw}:$bwresults{$bindata[$j]}{intime}:$bwresults{$bindata[$j]}{outbw}:$bwresults{$bindata[$j]}{outtime}\n";
 		} else {
 		    print "$i:$bindata[$j]:$bwresults{$bindata[$j]}{$direction}:$bwresults{$bindata[$j]}{$dirtime}\n";
@@ -276,7 +276,7 @@ sub printResults () {
 	    my @bindata = @{$altresults[$i]};
 	    for (my $j = 0; $j <= $#bindata; $j++) {
 		if (($bwresults{$bindata[$j]}{inbw} > 0) || ($bwresults{$bindata[$j]}{outbw} > 0)) {
-		    if ($options{u}) {
+		    if ($options{s}) {
 			print "$i:$bindata[$j]:$bwresults{$bindata[$j]}{inbw}:$bwresults{$bindata[$j]}{intime}:$bwresults{$bindata[$j]}{outbw}:$bwresults{$bindata[$j]}{outtime}\n";
 		    } else {
 			print "$i:$bindata[$j]:$bwresults{$bindata[$j]}{$direction}:$bwresults{$bindata[$j]}{$dirtime}\n";
