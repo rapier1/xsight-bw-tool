@@ -6,6 +6,7 @@ use YAML;
 use Date::Parse;
 use Statistics::Descriptive;
 use Getopt::Std;
+use Math::Round;
 
 #instantiate the curl handle object
 my $curl = WWW::Curl::Easy->new;
@@ -98,70 +99,42 @@ if (!$options{q}) {
 }
 
 my $i = 1;
-my $port = 0;
 #load the flows has with appropriate data. 
 foreach $value (@values) {
+    my $time = 0;
+    my $src_port = 0;
+    my $dest_port = 0;
+    my $msecs = 0;
+    my $secs = 0;
+    my $inbytes = 0;
+    my $outbytes = 0;
     $flowid = @{$value}[1];
     print STDERR "$i $flowid\n";
+
+    # if we are searching on gridftp command we want to remove the control channel
+    # since this takes time we want to only do it for gridftp
+
+    $query = "query?pretty=true&db=" . $db_name . "&q=select last(value) from HCDataOctetsIn, HCDataOctetsOut, ElapsedSecs, \
+                                                                              ElapsedMicroSecs, dest_port, src_port \
+                                                                              WHERE flow='$flowid'";
+ 
+    ($msecs, $secs, $inbytes, $outbytes, $src_port, $dest_port) = &runQuery($query);
+ 
     # if we are searching on gridftp command we want to remove the control channel
     # since this takes time we want to only do it for gridftp
     if ($command eq "globus-gridftp-") {
-	$query = "query?pretty=true&db=" . $db_name . "&q=select first(value) from dest_port WHERE flow='$flowid'";
-	(my $tmp, my $port) = &runquery($query);
-	if ($port == 2811) {
+	if ($dest_port == 2811) {
 	    next;
 	}
-	$query = "query?pretty=true&db=" . $db_name . "&q=select first(value) from src_port WHERE flow='$flowid'";
-	($tmp, $port) = &runquery($query);
-	if ($port == 2811) {
+	if ($src_port == 2811) {
 	    next;
 	}
     }
-    #get the first and last hcdata octets in both directions and the associated timestamps
-    $query = "query?pretty=true&db=" . $db_name . "&q=select first(value) from HCDataOctetsIn WHERE flow='$flowid'";
-    ($flows{$flowid}{hcdatain_starttime}, $flows{$flowid}{hcdatain_firstval}) = &runquery($query);
-    $query = "query?pretty=true&db=" . $db_name . "&q=select last(value) from HCDataOctetsIn WHERE flow='$flowid'";
-    ($flows{$flowid}{hcdatain_endtime}, $flows{$flowid}{hcdatain_lastval}) = &runquery($query);
-    $query = "query?pretty=true&db=" . $db_name . "&q=select first(value) from HCDataOctetsOut WHERE flow='$flowid'";
-    ($flows{$flowid}{hcdataout_starttime}, $flows{$flowid}{hcdataout_firstval}) = &runquery($query);
-    $query = "query?pretty=true&db=" . $db_name . "&q=select last(value) from HCDataOctetsOut WHERE flow='$flowid'";
-    ($flows{$flowid}{hcdataout_endtime}, $flows{$flowid}{hcdataout_lastval}) = &runquery($query);
+    
+    $flows{$flowid}{Time} = $time = $secs + $msecs/1000000;
+    $flows{$flowid}{InBW} = int($inbytes / $time);
+    $flows{$flowid}{OutBW} = int($outbytes / $time);
     $i++;
-}
-
-my $deltatime;
-my $deltabytes;
-my $bw;
-my %bwresults;
-
-# go through each of the flows and see if there is enough data to generate
-# bandwidth data
-foreach $flowid (keys %flows) {
-    $deltatime = str2time($flows{$flowid}{hcdatain_endtime}) - str2time($flows{$flowid}{hcdatain_starttime});
-    $deltabytes =  $flows{$flowid}{hcdatain_lastval} -  $flows{$flowid}{hcdatain_firstval};
-    if ($deltatime != 0) {
-	$bw = int(($deltabytes*8)/$deltatime);
-	if ($bw > 0) {
-	    $bwresults{$flowid}{inbw} = $bw;
-	    $bwresults{$flowid}{intime} = $deltatime;
-	}
-    }
-    $deltatime = str2time($flows{$flowid}{hcdataout_endtime}) - str2time($flows{$flowid}{hcdataout_starttime});
-    $deltabytes =  $flows{$flowid}{hcdataout_lastval} -  $flows{$flowid}{hcdataout_firstval};
-    if ($deltatime != 0) {
-	$bw = int(($deltabytes*8)/$deltatime);
-	if ($bw > 0) {
-	    $bwresults{$flowid}{outbw} = $bw;
-	    $bwresults{$flowid}{outtime} = $deltatime;
-	}
-    }
-    if ($options{s}) {
-	if ($bwresults{$flowid}{inbw} > $bwresults{$flowid}{outbw}) {
-	    $bwresults{$flowid}{unified} = $bwresults{$flowid}{inbw};
-	} else {
-	    $bwresults{$flowid}{unified} = $bwresults{$flowid}{outbw};
-	}
-    }
 }
 
 my $stats = Statistics::Descriptive::Full->new();
@@ -174,18 +147,18 @@ my $out_stats = Statistics::Descriptive::Full->new();
 #this can screw up the stats accuracy
 #may want to break this down into inbound and outbound
 my ($inbw, $outbw, $intime, $outtime);
-foreach $flowid (keys %bwresults) {
+foreach $flowid (keys %flows) {
     if ($options{s}) {
-	if (($bwresults{$flowid}{inbw} > 0) || ($bwresults{$flowid}{outbw} > 0)) {
-	    if ($bwresults{$flowid}{inbw} > $bwresults{$flowid}{outbw}) {
-		$stats->add_data($bwresults{$flowid}{inbw});
-	    } else {
-		$stats->add_data($bwresults{$flowid}{outbw});
-	    }
+	if ($flows{$flowid}{InBW} > $flows{$flowid}{OutBW}) {
+	    $flows{$flowid}{unified} = $flows{$flowid}{InBW};
+	    $stats->add_data($flows{$flowid}{InBW});
+	} else {
+	    $flows{$flowid}{unified} = $flows{$flowid}{OutBW};
+	    $stats->add_data($flows{$flowid}{OutBW});
 	}
     } else {
-	$in_stats->add_data($bwresults{$flowid}{inbw});
-	$out_stats->add_data($bwresults{$flowid}{outbw});
+	$in_stats->add_data($flows{$flowid}{InBW});
+	$out_stats->add_data($flows{$flowid}{OutBW});
     }
 }
 
@@ -199,14 +172,14 @@ if ($options{s}) {
     print "\nInbound Stats\n";
     if ($in_stats->count() > 0) {
 	&printStats($in_stats);
-	&printResults("inbw");
+	&printResults("InBW");
     } else {
 	print "No inbound results\n";
     }
     if ($out_stats->count() > 0) {
 	print "\nOutbound Stats\n";
 	&printStats($out_stats);
-	&printResults("outbw");
+	&printResults("OutBW");
     } else {
 	print "No outbound results\n";
     }
@@ -217,23 +190,19 @@ exit;
 
 sub printResults () {
     my $direction = shift @_;
-    my $dirtime = "outtime";
-    if ($direction eq "inbw") {
-	$dirtime = "intime";
-    }    
     my @results = ();
     my @altresults = ();
     my $bw;
     my $bin;
-    foreach $flowid (sort { $bwresults{$a}{$direction} <=> $bwresults{$b}{$direction}} keys %bwresults) {
-	$bw = $bwresults{$flowid}{$direction};
+    foreach $flowid (sort { $flows{$a}{$direction} <=> $flows{$b}{$direction}} keys %flows) {
+	$bw = $flows{$flowid}{$direction};
 	$bin = int ($bw/$bin_size);
 	$bintotal[$bin]++;
 	push (@{$results[$bin]}, $flowid);
     }
     if ($options{f}) {
-	foreach $flowid (sort { $bwresults{$a}{$direction} <=> $bwresults{$b}{$direction}} keys %bwresults) {
-	    $bw = $bwresults{$flowid}{$direction};
+	foreach $flowid (sort { $flows{$a}{$direction} <=> $flows{$b}{$direction}} keys %flows) {
+	    $bw = $flows{$flowid}{$direction};
 	    if ($altbin_count != 0) {
 		$altbin = int ($bw/$altbin_size);
 	    } else {
@@ -245,41 +214,37 @@ sub printResults () {
     }
     
     print "Bin Count (Scott's rule)\n";
-    #for ($i = 0; $i <= $#bintotal; $i++) {
-    #    print "$i\t$bintotal[$i]\n";
-    #}
     if ($options{s}) {
 	print "bin:flow:inbw:intime:outbw:outtime\n";
     } else {
-	print "bin:flow:$direction:$dirtime\n";
+	print "bin:flow:$direction:Time\n";
     }
     for ($i = 0; $i <= $bin_count; $i++) {
 	my @bindata = @{$results[$i]};
 	for (my $j = 0; $j <= $#bindata; $j++) {
-	    if (($bwresults{$bindata[$j]}{inbw} > 0) || ($bwresults{$bindata[$j]}{outbw} > 0)) {
-		if ($options{s}) {
-		    print "$i:$bindata[$j]:$bwresults{$bindata[$j]}{inbw}:$bwresults{$bindata[$j]}{intime}:$bwresults{$bindata[$j]}{outbw}:$bwresults{$bindata[$j]}{outtime}\n";
-		} else {
-		    print "$i:$bindata[$j]:$bwresults{$bindata[$j]}{$direction}:$bwresults{$bindata[$j]}{$dirtime}\n";
-		}
+	    if ($options{s}) {
+		print "$i:$bindata[$j]:$flows{$bindata[$j]}{InBW}:$flows{$bindata[$j]}{Time}:$flows{$bindata[$j]}{OutBW}:$flows{$bindata[$j]}{Time}\n";
+	    } else {
+		print "$i:$bindata[$j]:$flows{$bindata[$j]}{$direction}:$flows{$bindata[$j]}{Time}\n";
 	    }
 	}
     }
         
     if ($options{f}) {   
+	if ($options{s}) {
+	    print "bin:flow:inbw:intime:outbw:outtime\n";
+	} else {
+	    print "bin:flow:$direction:Time\n";
+	}
 	print "Bin Count (Freedman–Diaconis' choice)\n";
-	#for ($i = 0; $i <= $#altbintotal; $i++) {
-	#    print "$i\t$altbintotal[$i]\n";
-	#}
-	print "bin:flow:$direction:$dirtime\n";
 	for ($i = 0; $i <= $altbin_count; $i++) {
 	    my @bindata = @{$altresults[$i]};
 	    for (my $j = 0; $j <= $#bindata; $j++) {
-		if (($bwresults{$bindata[$j]}{inbw} > 0) || ($bwresults{$bindata[$j]}{outbw} > 0)) {
+		if (($flows{$bindata[$j]}{inbw} > 0) || ($flows{$bindata[$j]}{outbw} > 0)) {
 		    if ($options{s}) {
-			print "$i:$bindata[$j]:$bwresults{$bindata[$j]}{inbw}:$bwresults{$bindata[$j]}{intime}:$bwresults{$bindata[$j]}{outbw}:$bwresults{$bindata[$j]}{outtime}\n";
+			print "$i:$bindata[$j]:$flows{$bindata[$j]}{InBW}:$flows{$bindata[$j]}{Time}:$flows{$bindata[$j]}{OutBW}:$flows{$bindata[$j]}{Time}\n";
 		    } else {
-			print "$i:$bindata[$j]:$bwresults{$bindata[$j]}{$direction}:$bwresults{$bindata[$j]}{$dirtime}\n";
+			print "$i:$bindata[$j]:$flows{$bindata[$j]}{$direction}:$flows{$bindata[$j]}{Time}\n";
 		    }
 		}
 	    }
@@ -323,7 +288,7 @@ sub printStats () {
     }
 }
 
-sub runquery () {
+sub runQuery () {
     $query = shift @_;
     $url = URI::URL->new($query, $base_url);
     $curl->setopt(CURLOPT_URL, $url->abs);
@@ -335,12 +300,33 @@ sub runquery () {
         print("An error happened: $retcode ".$curl->strerror($retcode)." ".$curl->errbuf."\n");
     }
     my $decoded = decode_json($returned_data);
-    my $time = $decoded->{'results'}->[0]->{'series'}->[0]->{'values'}[0][0];
-    my $hcdataoctets = $decoded->{'results'}->[0]->{'series'}->[0]->{'values'}[0][1];
-    if (!$time) {
-	#no time stamp means no data
-	$time = 0;
-	$hcdataoctets = 0;
+    my @series = $decoded->{'results'}->[0]->{series};
+    my $msecs;
+    my $secs;
+    my $in;
+    my $out;
+    my $dport;
+    my $sport;
+    for (my $i = 0; $i < 6; $i++) {
+	$name = $series[0][$i]{name};
+	if ($name eq "ElapsedMicroSecs") {
+	    $msecs = $series[0][$i]{values}[0][1];
+	}
+	if ($name eq "ElapsedSecs") {
+	    $secs = $series[0][$i]{values}[0][1];
+	}
+	if ($name eq "HCDataOctetsIn") {
+	    $in = $series[0][$i]{values}[0][1];
+	}
+	if ($name eq "HCDataOctetsOut") {
+	    $out = $series[0][$i]{values}[0][1];
+	}	
+	if ($name eq "src_port") {
+	    $sport = $series[0][$i]{values}[0][1];
+	}
+	if ($name eq "dest_port") {
+	    $dport = $series[0][$i]{values}[0][1];
+	}
     }
-    return ($time, $hcdataoctets);
+    return ($msecs, $secs, $in, $out, $sport, $dport);
 }
